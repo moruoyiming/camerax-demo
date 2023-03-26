@@ -13,7 +13,6 @@ import android.os.HandlerThread
 import android.provider.MediaStore
 import android.util.DisplayMetrics
 import android.util.Log
-import android.view.GestureDetector
 import android.view.View
 import android.widget.Toast
 import androidx.camera.core.*
@@ -51,7 +50,6 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
 
     // An instance of a helper function to work with Shared Preferences
     private val prefs by lazy { SharedPrefsManager.newInstance(requireContext()) }
-
     private var preview: Preview? = null
     private var cameraProvider: ProcessCameraProvider? = null
     private var imageCapture: ImageCapture? = null
@@ -59,7 +57,6 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
 
     // A lazy instance of the current fragment's view binding
     override val binding: FragmentCameraBinding by lazy { FragmentCameraBinding.inflate(layoutInflater) }
-
     private var displayId = -1
 
     // Selector showing which camera is selected (front or back)
@@ -85,6 +82,10 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
 
     // Selector showing is there any selected timer and it's value (3s or 10s)
     private var selectedTimer = CameraTimer.OFF
+
+    private var helper: SensorHelper? = null
+
+    private var mOrientation = 0 //默认竖屏
 
     /**
      * A display listener for orientation changes that do not trigger a configuration
@@ -112,9 +113,7 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
         hasGrid = prefs.getBoolean(KEY_GRID, false)
         hasHdr = prefs.getBoolean(KEY_HDR, false)
         initViews()
-
         displayManager.registerDisplayListener(displayListener, null)
-
         binding.run {
             viewFinder.addOnAttachStateChangeListener(object :
                 View.OnAttachStateChangeListener {
@@ -140,18 +139,31 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
             btnFlashAuto.setOnClickListener { closeFlashAndSelect(FLASH_MODE_AUTO) }
             btnExposure.setOnClickListener { flExposure.visibility = View.VISIBLE }
             flExposure.setOnClickListener { flExposure.visibility = View.GONE }
-
             // This swipe gesture adds a fun gesture to switch between video and photo
-            val swipeGestures = SwipeGestureDetector().apply {
-                setSwipeCallback(right = {
-                    Navigation.findNavController(view).navigate(R.id.action_camera_to_video)
-                })
-            }
-            val gestureDetectorCompat = GestureDetector(requireContext(), swipeGestures)
-            viewFinder.setOnTouchListener { _, motionEvent ->
-                if (gestureDetectorCompat.onTouchEvent(motionEvent)) return@setOnTouchListener false
-                return@setOnTouchListener true
-            }
+//            val swipeGestures = SwipeGestureDetector().apply {
+//                setSwipeCallback(right = {
+//                    Navigation.findNavController(view).navigate(R.id.action_camera_to_video)
+//                })
+//            }
+//            val gestureDetectorCompat = GestureDetector(requireContext(), swipeGestures)
+//            viewFinder.setOnTouchListener { _, motionEvent ->
+//                if (gestureDetectorCompat.onTouchEvent(motionEvent)) return@setOnTouchListener false
+//                return@setOnTouchListener true
+//            }
+            helper = SensorHelper(activity, object : SensorHelper.onOrientationChangedListener {
+
+                override fun onOrientationChanged(orientation: Int) {
+                    mOrientation = orientation
+                    if (mOrientation == 0) {//竖屏
+                        binding.groupGridLines2?.visibility = View.GONE
+                        binding.groupGridLines.visibility = if (hasGrid) View.VISIBLE else View.GONE
+                    } else {//横屏
+                        binding.groupGridLines.visibility = View.GONE
+                        binding.groupGridLines2?.visibility = if (hasGrid) View.VISIBLE else View.GONE
+                    }
+                }
+            })
+            helper?.enable()
         }
     }
 
@@ -160,7 +172,11 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
      * */
     private fun initViews() {
         binding.btnGrid.setImageResource(if (hasGrid) R.drawable.ic_grid_on else R.drawable.ic_grid_off)
-        binding.groupGridLines.visibility = if (hasGrid) View.VISIBLE else View.GONE
+        if (mOrientation == 0) {//竖屏
+            binding.groupGridLines.visibility = if (hasGrid) View.VISIBLE else View.GONE
+        } else {//横屏
+            binding.groupGridLines2?.visibility = if (hasGrid) View.VISIBLE else View.GONE
+        }
         adjustInsets()
     }
 
@@ -288,7 +304,11 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
         ) { flag ->
             hasGrid = flag
             prefs.putBoolean(KEY_GRID, flag)
-            binding.groupGridLines.visibility = if (flag) View.VISIBLE else View.GONE
+            if (mOrientation == 0) {//竖屏
+                binding.groupGridLines.visibility = if (hasGrid) View.VISIBLE else View.GONE
+            } else {//横屏
+                binding.groupGridLines2.visibility = if (hasGrid) View.VISIBLE else View.GONE
+            }
         }
     }
 
@@ -490,10 +510,12 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
                 binding.tvCountDown.text = i.toString()
                 delay(1000)
             }
+
             CameraTimer.S10 -> for (i in 10 downTo 1) {
                 binding.tvCountDown.text = i.toString()
                 delay(1000)
             }
+
             CameraTimer.OFF -> {}
         }
         binding.tvCountDown.text = ""
@@ -572,6 +594,7 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
 
     override fun onDestroyView() {
         super.onDestroyView()
+        helper?.disable()
         displayManager.unregisterDisplayListener(displayListener)
     }
 

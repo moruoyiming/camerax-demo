@@ -4,6 +4,10 @@ import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.Context
 import android.content.res.Configuration
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.hardware.display.DisplayManager
 import android.net.Uri
 import android.os.Build
@@ -13,7 +17,11 @@ import android.os.HandlerThread
 import android.provider.MediaStore
 import android.util.DisplayMetrics
 import android.util.Log
+import android.view.GestureDetector
+import android.view.OrientationEventListener
+import android.view.Surface
 import android.view.View
+import android.widget.ImageButton
 import android.widget.Toast
 import androidx.camera.core.*
 import androidx.camera.core.ImageCapture.*
@@ -87,6 +95,10 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
 
     private var mOrientation = 0 //默认竖屏
 
+    private var view: ImageButton? = null
+    private var orientationEventListener: OrientationEventListener? = null
+    private var lastOrientation = -1
+
     /**
      * A display listener for orientation changes that do not trigger a configuration
      * change, for example if we choose to override config change in manifest or for 180-degree
@@ -140,16 +152,18 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
             btnExposure.setOnClickListener { flExposure.visibility = View.VISIBLE }
             flExposure.setOnClickListener { flExposure.visibility = View.GONE }
             // This swipe gesture adds a fun gesture to switch between video and photo
-//            val swipeGestures = SwipeGestureDetector().apply {
-//                setSwipeCallback(right = {
-//                    Navigation.findNavController(view).navigate(R.id.action_camera_to_video)
-//                })
-//            }
-//            val gestureDetectorCompat = GestureDetector(requireContext(), swipeGestures)
-//            viewFinder.setOnTouchListener { _, motionEvent ->
-//                if (gestureDetectorCompat.onTouchEvent(motionEvent)) return@setOnTouchListener false
-//                return@setOnTouchListener true
-//            }
+            val swipeGestures = SwipeGestureDetector().apply {
+                setSwipeCallback(left = {
+                    Navigation.findNavController(view).navigate(R.id.action_video_to_camera)
+                }, right = {
+                    Navigation.findNavController(view).navigate(R.id.action_camera_to_video)
+                })
+            }
+            val gestureDetectorCompat = GestureDetector(requireContext(), swipeGestures)
+            viewFinder.setOnTouchListener { _, motionEvent ->
+                if (gestureDetectorCompat.onTouchEvent(motionEvent)) return@setOnTouchListener false
+                return@setOnTouchListener true
+            }
             helper = SensorHelper(activity, object : SensorHelper.onOrientationChangedListener {
 
                 override fun onOrientationChanged(orientation: Int) {
@@ -164,6 +178,7 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
                 }
             })
             helper?.enable()
+
         }
     }
 
@@ -177,7 +192,35 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
         } else {//横屏
             binding.groupGridLines2?.visibility = if (hasGrid) View.VISIBLE else View.GONE
         }
+        view = binding.btnGrid
         adjustInsets()
+        val sensorManager = requireActivity().getSystemService(Context.SENSOR_SERVICE) as SensorManager?
+        val gravitySensor = sensorManager!!.getDefaultSensor(Sensor.TYPE_GRAVITY)
+        val sensorEventListener: SensorEventListener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                val x = event.values[0 % event.values.size]
+                val y = event.values[1 % event.values.size]
+                val z = event.values[2 % event.values.size]
+                if (z > 9.5 || z < -9.5) {
+                    Log.i("sfsdf","手机平行")
+                }else{
+                    Log.i("sfsdf","手机不平行")
+                }
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+            }
+        }
+        orientationEventListener = object : OrientationEventListener(activity, SensorManager.SENSOR_DELAY_NORMAL) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation != ORIENTATION_UNKNOWN && lastOrientation != orientation) {
+                    lastOrientation = orientation
+                    rotateView(0f, 0f, 0f)
+                }
+            }
+        }
+        orientationEventListener?.enable()
+        sensorManager.registerListener(sensorEventListener, gravitySensor, SensorManager.SENSOR_DELAY_FASTEST)
     }
 
     /**
@@ -613,5 +656,49 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
 
         private const val RATIO_4_3_VALUE = 4.0 / 3.0 // aspect ratio 4x3
         private const val RATIO_16_9_VALUE = 16.0 / 9.0 // aspect ratio 16x9
+    }
+
+
+    private fun getScreenOrientation(): Int {
+        val rotation: Int = requireActivity().getWindowManager().getDefaultDisplay().getRotation()
+        val dm = resources.displayMetrics
+        val width = dm.widthPixels
+        val height = dm.heightPixels
+        val orientation: Int
+        orientation = if ((rotation == Surface.ROTATION_0 || rotation == Surface.ROTATION_180) && height > width ||
+            (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) && width > height
+        ) {
+            Configuration.ORIENTATION_PORTRAIT
+        } else {
+            Configuration.ORIENTATION_LANDSCAPE
+        }
+        return orientation
+    }
+
+    private fun rotateView(x: Float, y: Float, z: Float) {
+        val orientation = getScreenOrientation()
+        val rotationX = Math.max(-90f, Math.min(90f, x / SensorManager.GRAVITY_EARTH * 90))
+        val rotationY = Math.max(-90f, Math.min(90f, y / SensorManager.GRAVITY_EARTH * 90))
+        val rotationZ = Math.max(-90f, Math.min(90f, z / SensorManager.GRAVITY_EARTH * 90))
+        if (orientation == Configuration.ORIENTATION_PORTRAIT) {
+            if (Math.abs(rotationX) > 45) {
+                view?.rotationX = 180 - rotationX
+                view?.scaleX = -1f
+            } else {
+                view?.rotationX = rotationX
+                view?.scaleX = 1f
+            }
+            view?.rotationY = rotationY
+        } else {
+            view?.rotationX = rotationX
+            if (Math.abs(rotationY) > 45) {
+                view?.rotationY = 180 - rotationY
+                view?.scaleY = -1f
+            } else {
+                view?.rotationY = rotationY
+                view?.scaleY = 1f
+            }
+        }
+        view?.rotation = rotationZ
     }
 }
